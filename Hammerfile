@@ -1,0 +1,176 @@
+# Hammerfile - build / install / run helpers for Friendly Lang Tutor.
+# Run with: hammer <command>   (https://github.com/dux/hammer)
+
+APP_NAME    ||= 'FriendlyLangTutor'
+BUNDLE_DIR  ||= "#{APP_NAME}.app"
+INSTALL_DIR ||= '/Applications'
+
+task :doctor do
+  desc 'Check that required tools are on PATH'
+  proc do
+    ok = true
+    %w[swift codesign whisper-cli].each do |tool|
+      path = `command -v #{tool} 2>/dev/null`.strip
+      if path.empty?
+        say.red "missing: #{tool}"
+        ok = false
+      else
+        say.green "found #{tool} at #{path}"
+      end
+    end
+
+    agent = %w[claude codex opencode].find { |c| !`command -v #{c} 2>/dev/null`.strip.empty? }
+    if agent
+      say.green "found LLM agent: #{agent}"
+    else
+      say.red 'no LLM agent found (need one of claude / codex / opencode)'
+      ok = false
+    end
+
+    error 'required tools missing' unless ok
+    say.cyan 'doctor: OK'
+  end
+end
+
+task :build do
+  desc 'Build the app (debug by default, --release for release)'
+  opt :release, type: :boolean, alias: :r
+
+  proc do |opts|
+    if opts[:release]
+      sh 'swift build -c release'
+    else
+      sh 'swift build'
+    end
+  end
+end
+
+task :release do
+  desc 'Build release configuration'
+  proc { hammer :build, release: true }
+end
+
+task :app do
+  desc 'Build and assemble the .app bundle in the project root'
+  opt :release, type: :boolean, alias: :r
+
+  proc do |opts|
+    hammer :build, release: opts[:release]
+    cfg = opts[:release] ? 'release' : 'debug'
+    bin = ".build/#{cfg}/#{APP_NAME}"
+    error "binary not found at #{bin}" unless File.exist?(bin)
+
+    say "assembling #{BUNDLE_DIR}"
+    sh "rm -rf #{BUNDLE_DIR}"
+    sh "mkdir -p #{BUNDLE_DIR}/Contents/MacOS"
+    sh "mkdir -p #{BUNDLE_DIR}/Contents/Resources"
+    sh "cp app/Info.plist #{BUNDLE_DIR}/Contents/Info.plist"
+    sh "cp #{bin} #{BUNDLE_DIR}/Contents/MacOS/#{APP_NAME}"
+
+    # SwiftPM bundles resources (seed lists) next to the binary; carry them in so
+    # Bundle.module resolves inside the assembled .app.
+    Dir.glob(".build/#{cfg}/*.bundle").each do |b|
+      sh "cp -R '#{b}' #{BUNDLE_DIR}/Contents/Resources/"
+    end
+
+    `codesign --force --sign - #{BUNDLE_DIR}/Contents/MacOS/#{APP_NAME} 2>/dev/null`
+
+    say.green "built #{BUNDLE_DIR}"
+  end
+end
+
+task :install do
+  desc 'Build app bundle and copy to /Applications'
+  opt :release, type: :boolean, alias: :r
+
+  proc do |opts|
+    hammer :app, release: opts[:release]
+    `pkill -x "#{APP_NAME}" 2>/dev/null`
+    sleep 0.3
+    sh "rm -rf #{INSTALL_DIR}/#{BUNDLE_DIR}"
+    sh "cp -R #{BUNDLE_DIR} #{INSTALL_DIR}/"
+    sh "rm -rf #{BUNDLE_DIR}"
+    say.green "installed to #{INSTALL_DIR}/#{BUNDLE_DIR}"
+  end
+end
+
+task :run do
+  desc 'Open the installed app'
+  proc { sh "open #{INSTALL_DIR}/#{BUNDLE_DIR}" }
+end
+
+task :dev do
+  desc 'Install + run, then watch app/ and reinstall on change (7s throttle)'
+  proc do
+    delay = 7
+    build = proc do
+      begin
+        hammer :install
+      rescue StandardError => e
+        say.red "build failed: #{e.message} (still watching)"
+      end
+    end
+
+    build.call
+    hammer :run
+
+    say.cyan 'watching app/ for changes (ctrl-c to stop)'
+    stamp = '.watch_timestamp'
+    `touch #{stamp}`
+    pending_since = nil
+    shown = nil
+
+    loop do
+      changed = `find app -name "*.swift" -newer #{stamp} 2>/dev/null`.strip
+      unless changed.empty?
+        `touch #{stamp}`
+        puts if pending_since
+        pending_since = Time.now
+        shown = nil
+        print 'change detected, compiling in '
+      end
+
+      if pending_since
+        remaining = delay - (Time.now - pending_since).to_i
+        if remaining <= 0
+          puts
+          pending_since = nil
+          say.green 'rebuilding'
+          build.call
+        elsif remaining != shown
+          print "#{remaining} ... "
+          $stdout.flush
+          shown = remaining
+        end
+      end
+
+      sleep 0.5
+    end
+  end
+end
+
+task :clean do
+  desc 'Remove .build and any local .app bundle'
+  proc do
+    sh 'swift package clean'
+    sh "rm -rf .build #{BUNDLE_DIR}"
+    say.green 'clean'
+  end
+end
+
+task :lint do
+  desc 'Run swiftlint (if installed)'
+  proc do
+    swiftlint = `command -v swiftlint 2>/dev/null`.strip
+    if swiftlint.empty?
+      say.yellow 'swiftlint not installed - skipping'
+    else
+      sh 'swiftlint lint --quiet'
+    end
+  end
+end
+
+task :test do
+  desc 'Run swift test'
+  proc { sh 'swift test' }
+end

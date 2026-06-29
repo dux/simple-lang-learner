@@ -18,15 +18,11 @@ enum ContentCache {
         root.appendingPathComponent("text/\(pair)/\(hash(word))/\(style).txt")
     }
 
-    // Headword spoken alone - reusable across styles, keyed by voice + speed.
-    static func wordAudioURL(pair: String, word: String, voice: String, ratePct: Int) -> URL {
-        root.appendingPathComponent("audio/\(pair)/\(hash(word))/word.\(voice).\(ratePct).caf")
-    }
-
-    // A whole sentence spoken - tied to one style + index + language + speed.
-    static func sentenceAudioURL(pair: String, word: String, style: String,
-                                 index: Int, lang: String, ratePct: Int) -> URL {
-        root.appendingPathComponent("audio/\(pair)/\(hash(word))/\(style)/\(index).\(lang).\(ratePct).caf")
+    // Rendered speech, content-addressed by the exact text plus the voice and speed
+    // that produced it. Any identical utterance is reused across words, sentences,
+    // languages, and pairs, and a voice or speed change never serves stale audio.
+    static func audioURL(text: String, lang: String, voice: String, ratePct: Int) -> URL {
+        root.appendingPathComponent("audio/\(hash(text)).\(lang).\(voice).\(ratePct).caf")
     }
 
     static func loadText(_ url: URL) -> String? {

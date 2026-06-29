@@ -100,52 +100,10 @@ task :run do
 end
 
 task :dev do
-  desc 'Install + run, then watch app/ and reinstall on change (7s throttle)'
+  desc 'Build, install, and launch the app'
   proc do
-    delay = 7
-    build = proc do
-      begin
-        hammer :install
-      rescue StandardError => e
-        say.red "build failed: #{e.message} (still watching)"
-      end
-    end
-
-    build.call
+    hammer :install
     hammer :run
-
-    say.cyan 'watching app/ for changes (ctrl-c to stop)'
-    stamp = '.watch_timestamp'
-    `touch #{stamp}`
-    pending_since = nil
-    shown = nil
-
-    loop do
-      changed = `find app -name "*.swift" -newer #{stamp} 2>/dev/null`.strip
-      unless changed.empty?
-        `touch #{stamp}`
-        puts if pending_since
-        pending_since = Time.now
-        shown = nil
-        print 'change detected, compiling in '
-      end
-
-      if pending_since
-        remaining = delay - (Time.now - pending_since).to_i
-        if remaining <= 0
-          puts
-          pending_since = nil
-          say.green 'rebuilding'
-          build.call
-        elsif remaining != shown
-          print "#{remaining} ... "
-          $stdout.flush
-          shown = remaining
-        end
-      end
-
-      sleep 0.5
-    end
   end
 end
 

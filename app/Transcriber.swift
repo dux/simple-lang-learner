@@ -1,5 +1,4 @@
 import AVFoundation
-import AppKit
 import SwiftUI
 
 // Records a short mic clip to a 16 kHz mono WAV, then shells out to whisper-cli
@@ -19,52 +18,12 @@ final class Transcriber: ObservableObject {
     private var wavURL: URL?
     private let settings = AppSettings.shared
 
-    private var holdTimer: Timer?
-    private var keyMonitor: Any?
-
     func toggle() {
         if isRecording {
             stopAndTranscribe()
         } else {
             Task { await start() }
         }
-    }
-
-    // Push-to-talk: hold the left Command key for ~0.4s to begin recording, release
-    // to stop. A local monitor only fires while the app is focused, so this needs
-    // no Accessibility permission.
-    func installPushToTalk() {
-        guard keyMonitor == nil else { return }
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
-            MainActor.assumeIsolated { self?.handleFlagsChanged(event) }
-            return event
-        }
-    }
-
-    private func handleFlagsChanged(_ event: NSEvent) {
-        // keyCode 55 is the left Command key.
-        guard event.keyCode == 55 else { return }
-        if event.modifierFlags.contains(.command) {
-            beginHold()
-        } else {
-            endHold()
-        }
-    }
-
-    private func beginHold() {
-        guard !isRecording, !isTranscribing, holdTimer == nil else { return }
-        holdTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, !self.isRecording, !self.isTranscribing else { return }
-                Task { await self.start() }
-            }
-        }
-    }
-
-    private func endHold() {
-        holdTimer?.invalidate()
-        holdTimer = nil
-        if isRecording { stopAndTranscribe() }
     }
 
     private func start() async {

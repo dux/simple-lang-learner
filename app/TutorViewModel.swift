@@ -12,17 +12,23 @@ final class TutorViewModel: ObservableObject {
     @Published var heardText = ""
     @Published var feedback = ""
     @Published var styleSelection: WordStyle
+    @Published private(set) var nextReady = false   // next word prefetched + ready to show
 
     // What the user is currently practicing: nil index = the headword, else a
     // sentence index. `practiceTarget` is the text we match the spoken audio against.
     @Published var practicingIndex: Int?
     private var practiceTarget = ""
 
-    let speaker = Speaker()
+    let speech = Speech()
     let transcriber = Transcriber()
     let store: WordStore
     let settings = AppSettings.shared
     private var cancellables = Set<AnyCancellable>()
+
+    private var prefetched: WordContent?
+    private var prefetchTask: Task<Void, Never>?
+    private var autoTimer: Timer?
+    private var advanceWhenReady = false   // auto-advance fired before the next word was ready
 
     init() {
         let s = AppSettings.shared
@@ -43,106 +49,156 @@ final class TutorViewModel: ObservableObject {
             .store(in: &cancellables)
     }
 
-    var pair: String { settings.pair }
-    private var ratePct: Int { Int((settings.speechRate * 100).rounded()) }
-
     func onAppear() {
-        transcriber.installPushToTalk()
         ModelResolver.ensureAvailable(settings.whisperModel)
-        if content == nil { next() }
+        if content == nil { Task { await loadForeground(store.nextRandom(), force: false) } }
     }
 
     // MARK: word loop
 
+    // Advance to the prefetched word (instant). The button is disabled until one is
+    // ready, so `prefetched` is normally non-nil here.
     func next() {
-        let word = store.nextRandom()
-        Task { await load(word, force: false) }
+        guard let wc = prefetched else { return }
+        prefetched = nil
+        nextReady = false
+        show(wc)
+        startPrefetch()
     }
 
     func regenerate() {
         guard let word = content?.word else { return }
-        Task { await load(word, force: true) }
+        Task { await loadForeground(word, force: true) }
     }
 
     func setStyle(_ style: WordStyle) {
         guard style != styleSelection else { return }
         styleSelection = style
         settings.style = style.rawValue
-        if let word = content?.word {
-            Task { await load(word, force: false) }
-        }
+        guard let word = content?.word else { return }
+        Task { await loadForeground(word, force: false) }
     }
 
-    private func load(_ word: String, force: Bool) async {
+    // Foreground load: show progress, generate this word, display + speak it, then
+    // begin prefetching the following word.
+    private func loadForeground(_ word: String, force: Bool) async {
         isLoading = true
         status = "generating..."
         feedback = ""
         heardText = ""
         defer { isLoading = false }
         do {
-            let wc = try await Generator.generate(
-                word: word, style: styleSelection,
-                target: settings.targetLanguage, native: settings.nativeLanguage, force: force)
-            await prerender(wc)        // pre-generate target audio before showing
-            content = wc
-            practiceTarget = wc.word   // default practice target is the headword
-            practicingIndex = nil
-            status = ""
-            announce(wc)
+            let wc = try await produce(word, force: force)
+            show(wc)
         } catch {
-            content = nil
+            if !force { content = nil }
             status = error.localizedDescription
         }
+        startPrefetch()
     }
 
-    // Pre-render only the headword so its playback is instant. Example sentences
-    // render lazily on first play (Speaker.play renders on a cache miss).
-    private func prerender(_ wc: WordContent) async {
-        let voice = Speaker.voiceTag(settings.targetLanguage)
-        let wordURL = ContentCache.wordAudioURL(pair: pair, word: wc.word, voice: voice, ratePct: ratePct)
-        if !ContentCache.exists(wordURL) {
-            _ = await Speaker.render(wc.word, language: settings.targetLanguage,
-                                     rate: Speaker.rate(settings.speechRate), to: wordURL)
+    // Generate (cached) + pre-render a word's audio without touching the UI.
+    private func produce(_ word: String, force: Bool) async throws -> WordContent {
+        let wc = try await Generator.generate(
+            word: word, style: styleSelection,
+            target: settings.targetLanguage, native: settings.nativeLanguage, force: force)
+        await prerender(wc)
+        return wc
+    }
+
+    // Display a ready word, reset practice + auto-advance state, and speak it.
+    private func show(_ wc: WordContent) {
+        content = wc
+        practiceTarget = wc.word   // default practice target is the headword
+        practicingIndex = nil
+        feedback = ""
+        heardText = ""
+        status = ""
+        announce(wc)
+        scheduleAuto()
+    }
+
+    // Generate the next random word in the background so "Next" is instant. Tries a
+    // few words so a single generation failure doesn't leave the button stuck.
+    private func startPrefetch() {
+        prefetchTask?.cancel()
+        nextReady = false
+        prefetchTask = Task {
+            for _ in 0..<3 {
+                if Task.isCancelled { return }
+                let word = store.nextRandom()
+                if let wc = try? await produce(word, force: false) {
+                    if Task.isCancelled { return }
+                    prefetched = wc
+                    nextReady = true
+                    if advanceWhenReady { advanceWhenReady = false; next() }
+                    return
+                }
+            }
         }
     }
 
-    // On a new word: say the word in the target language, then its meaning.
+    // MARK: auto-refresh
+
+    var autoMinutes: Int { settings.autoRefreshMinutes }
+
+    func setAutoMinutes(_ minutes: Int) {
+        settings.autoRefreshMinutes = max(0, minutes)
+        objectWillChange.send()
+        scheduleAuto()
+    }
+
+    // (Re)start the countdown to the next automatic advance. 0 minutes disables it.
+    private func scheduleAuto() {
+        autoTimer?.invalidate()
+        autoTimer = nil
+        let minutes = settings.autoRefreshMinutes
+        guard minutes > 0 else { return }
+        autoTimer = Timer.scheduledTimer(withTimeInterval: Double(minutes) * 60, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.autoFire() }
+        }
+    }
+
+    // On timeout: advance now if the next word is ready, else as soon as it is.
+    private func autoFire() {
+        if nextReady { next() } else { advanceWhenReady = true }
+    }
+
+    // Pre-render the headword at normal and slow speed (both used by the new-word
+    // announce) so its playback is instant. Example sentences render lazily on first play.
+    private func prerender(_ wc: WordContent) async {
+        await speech.prepare([
+            .init(text: wc.word, lang: settings.targetLanguage),
+            .init(text: wc.word, lang: settings.targetLanguage, speed: .slow),
+        ])
+    }
+
+    // On a new word: say the word in the target language, its meaning in the native
+    // language, then the word again slowly in the target language. Each uses the voice
+    // selected for that language in Settings.
     private func announce(_ wc: WordContent) {
-        speaker.announce([(wc.word, settings.targetLanguage),
-                          (wc.meaning, settings.nativeLanguage)])
+        speech.sequence([
+            .init(text: wc.word, lang: settings.targetLanguage),
+            .init(text: wc.meaning, lang: settings.nativeLanguage),
+            .init(text: wc.word, lang: settings.targetLanguage, speed: .slow),
+        ])
     }
 
     // MARK: playback buttons
 
-    // Effective rate + cache key for a chosen speed, scaled off the baseline.
-    private func rateInfo(_ speed: SpeechSpeed) -> (rate: Float, pct: Int) {
-        let multiplier = settings.speechRate * speed.factor
-        return (Speaker.rate(multiplier), Int((multiplier * 100).rounded()))
-    }
-
     func speakWord(_ speed: SpeechSpeed = .normal) {
         guard let wc = content else { return }
-        let info = rateInfo(speed)
-        let url = ContentCache.wordAudioURL(
-            pair: pair, word: wc.word, voice: Speaker.voiceTag(settings.targetLanguage), ratePct: info.pct)
-        speaker.play(wc.word, language: settings.targetLanguage, rate: info.rate, cacheURL: url)
+        speech.say(wc.word, lang: settings.targetLanguage, speed: speed)
     }
 
     func speakTarget(_ index: Int, speed: SpeechSpeed = .normal) {
         guard let wc = content, wc.sentences.indices.contains(index) else { return }
-        let info = rateInfo(speed)
-        let url = ContentCache.sentenceAudioURL(
-            pair: pair, word: wc.word, style: styleSelection.rawValue,
-            index: index, lang: settings.targetLanguage, ratePct: info.pct)
-        speaker.play(wc.sentences[index].target, language: settings.targetLanguage, rate: info.rate, cacheURL: url)
+        speech.say(wc.sentences[index].target, lang: settings.targetLanguage, speed: speed)
     }
 
-    // Speak a single tapped gloss chunk (target language). Ad-hoc, so not cached.
+    // Speak a single tapped gloss chunk in the target language.
     func speakChunk(_ text: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        speaker.play(trimmed, language: settings.targetLanguage,
-                     rate: rateInfo(.normal).rate, cacheURL: nil)
+        speech.say(text, lang: settings.targetLanguage)
     }
 
     // MARK: pronunciation / mic

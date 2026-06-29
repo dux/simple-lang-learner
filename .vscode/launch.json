@@ -1,0 +1,24 @@
+{
+  "configurations": [
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:simple-lang-learner}",
+      "name": "Debug FriendlyLangTutor",
+      "target": "FriendlyLangTutor",
+      "configuration": "debug",
+      "preLaunchTask": "swift: Build Debug FriendlyLangTutor"
+    },
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:simple-lang-learner}",
+      "name": "Release FriendlyLangTutor",
+      "target": "FriendlyLangTutor",
+      "configuration": "release",
+      "preLaunchTask": "swift: Build Release FriendlyLangTutor"
+    }
+  ]
+}

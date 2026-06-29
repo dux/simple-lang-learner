@@ -33,6 +33,16 @@ struct ContentView: View {
             Text("\(Languages.name(for: settings.targetLanguage)) -> \(Languages.name(for: settings.nativeLanguage))")
                 .font(.headline)
             Spacer()
+            HStack(spacing: 4) {
+                Text("Auto").font(.caption).foregroundStyle(.secondary)
+                TextField("", value: Binding(get: { settings.autoRefreshMinutes },
+                                             set: { vm.setAutoMinutes($0) }), format: .number)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 38)
+                    .multilineTextAlignment(.center)
+                Text("min").font(.caption).foregroundStyle(.secondary)
+            }
+            .help("Auto-advance to the next word every N minutes (0 = off)")
             Picker("", selection: Binding(get: { vm.styleSelection },
                                           set: { vm.setStyle($0) })) {
                 ForEach(WordStyle.allCases) { Text($0.label).tag($0) }
@@ -124,6 +134,7 @@ struct ContentView: View {
                     Text(glossAttributed(pair.gloss))
                         .font(.body)
                         .tint(.primary)
+                        .pointingHand()
                         .environment(\.openURL, OpenURLAction { url in
                             guard url.scheme == "fltspeak",
                                   let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
@@ -149,7 +160,7 @@ struct ContentView: View {
                     .foregroundStyle(vm.isRecording ? Color.red : .secondary)
                 Text(vm.isRecording
                      ? "Listening... tap the mic again to stop"
-                     : "Tap a mic to speak, or hold the left Command key. Your speech is matched against the example.")
+                     : "Tap a mic to speak. Your speech is matched against the example.")
                     .font(.callout).foregroundStyle(.secondary)
             }
             if !vm.transcriber.status.isEmpty {
@@ -206,6 +217,10 @@ struct ContentView: View {
                 Text(vm.status).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
+            if !vm.nextReady {
+                ProgressView().controlSize(.small)
+                Text("preparing next...").font(.caption).foregroundStyle(.secondary)
+            }
             Button {
                 vm.next()
             } label: {
@@ -213,7 +228,7 @@ struct ContentView: View {
             }
             .keyboardShortcut(.return, modifiers: [])
             .pointingHand()
-            .disabled(vm.isLoading)
+            .disabled(!vm.nextReady || vm.isLoading)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

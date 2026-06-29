@@ -7,6 +7,7 @@ import SwiftUI
 @MainActor
 final class TutorViewModel: ObservableObject {
     @Published var content: WordContent?
+    @Published private(set) var entry: VocabEntry?   // concept currently shown (carries the id)
     @Published var isLoading = false
     @Published var status = ""
     @Published var heardText = ""
@@ -23,16 +24,17 @@ final class TutorViewModel: ObservableObject {
     let transcriber = Transcriber()
     let store: WordStore
     let settings = AppSettings.shared
+    private let progress = ProgressStore.shared
     private var cancellables = Set<AnyCancellable>()
 
-    private var prefetched: WordContent?
+    private var prefetched: (entry: VocabEntry, content: WordContent)?
     private var prefetchTask: Task<Void, Never>?
     private var autoTimer: Timer?
     private var advanceWhenReady = false   // auto-advance fired before the next word was ready
 
     init() {
         let s = AppSettings.shared
-        store = WordStore(language: s.targetLanguage)
+        store = WordStore(target: s.targetLanguage, native: s.nativeLanguage)
         styleSelection = WordStyle(rawValue: s.style) ?? .everyday
         transcriber.onResult = { [weak self] heard in
             guard let self else { return }
@@ -51,45 +53,46 @@ final class TutorViewModel: ObservableObject {
 
     func onAppear() {
         ModelResolver.ensureAvailable(settings.whisperModel)
-        if content == nil { Task { await loadForeground(store.nextRandom(), force: false) } }
+        if content == nil, let e = store.nextRandom() { Task { await loadForeground(e, force: false) } }
     }
 
     // MARK: word loop
 
     // Advance to the prefetched word (instant). The button is disabled until one is
-    // ready, so `prefetched` is normally non-nil here.
+    // ready, so `prefetched` is normally non-nil here. Counts as a manual view.
     func next() {
-        guard let wc = prefetched else { return }
+        guard let p = prefetched else { return }
         prefetched = nil
         nextReady = false
-        show(wc)
+        progress.recordShown(id: p.entry.id, lang: settings.targetLanguage)
+        show(p.content, entry: p.entry)
         startPrefetch()
     }
 
     func regenerate() {
-        guard let word = content?.word else { return }
-        Task { await loadForeground(word, force: true) }
+        guard let e = entry else { return }
+        Task { await loadForeground(e, force: true) }
     }
 
     func setStyle(_ style: WordStyle) {
         guard style != styleSelection else { return }
         styleSelection = style
         settings.style = style.rawValue
-        guard let word = content?.word else { return }
-        Task { await loadForeground(word, force: false) }
+        guard let e = entry else { return }
+        Task { await loadForeground(e, force: false) }
     }
 
     // Foreground load: show progress, generate this word, display + speak it, then
     // begin prefetching the following word.
-    private func loadForeground(_ word: String, force: Bool) async {
+    private func loadForeground(_ entry: VocabEntry, force: Bool) async {
         isLoading = true
         status = "generating..."
         feedback = ""
         heardText = ""
         defer { isLoading = false }
         do {
-            let wc = try await produce(word, force: force)
-            show(wc)
+            let wc = try await produce(entry.target, force: force)
+            show(wc, entry: entry)
         } catch {
             if !force { content = nil }
             status = error.localizedDescription
@@ -107,8 +110,9 @@ final class TutorViewModel: ObservableObject {
     }
 
     // Display a ready word, reset practice + auto-advance state, and speak it.
-    private func show(_ wc: WordContent) {
+    private func show(_ wc: WordContent, entry: VocabEntry) {
         content = wc
+        self.entry = entry
         practiceTarget = wc.word   // default practice target is the headword
         practicingIndex = nil
         feedback = ""
@@ -126,10 +130,10 @@ final class TutorViewModel: ObservableObject {
         prefetchTask = Task {
             for _ in 0..<3 {
                 if Task.isCancelled { return }
-                let word = store.nextRandom()
-                if let wc = try? await produce(word, force: false) {
+                guard let e = store.nextRandom() else { return }
+                if let wc = try? await produce(e.target, force: false) {
                     if Task.isCancelled { return }
-                    prefetched = wc
+                    prefetched = (entry: e, content: wc)
                     nextReady = true
                     if advanceWhenReady { advanceWhenReady = false; next() }
                     return
@@ -196,9 +200,36 @@ final class TutorViewModel: ObservableObject {
         speech.say(wc.sentences[index].target, lang: settings.targetLanguage, speed: speed)
     }
 
-    // Speak a single tapped gloss chunk in the target language.
-    func speakChunk(_ text: String) {
-        speech.say(text, lang: settings.targetLanguage)
+    // Speak anything speakable (e.g. a tapped gloss chunk) through the shared path.
+    func speak(_ s: Speakable) { speech.speak(s) }
+
+    // MARK: all words + progress
+
+    // The full shared vocabulary for the current pair (drives the All Words browser).
+    var entries: [VocabEntry] { store.entries }
+
+    // The self-rated level / view count for the word on screen (defaults when none).
+    var knowledge: Knowledge {
+        guard let e = entry else { return .remind }
+        return progress.progress(id: e.id, lang: settings.targetLanguage).level
+    }
+    var shownCount: Int {
+        guard let e = entry else { return 0 }
+        return progress.progress(id: e.id, lang: settings.targetLanguage).shown
+    }
+
+    func rate(_ level: Knowledge) {
+        guard let e = entry else { return }
+        progress.setLevel(level, id: e.id, lang: settings.targetLanguage)
+    }
+
+    // Speak an arbitrary target-language word (the All Words row speaker).
+    func say(_ text: String) { speech.say(text, lang: settings.targetLanguage) }
+
+    // Open a word chosen from the All Words list - a manual view.
+    func load(_ entry: VocabEntry) {
+        progress.recordShown(id: entry.id, lang: settings.targetLanguage)
+        Task { await loadForeground(entry, force: false) }
     }
 
     // MARK: pronunciation / mic
@@ -212,6 +243,7 @@ final class TutorViewModel: ObservableObject {
     func practiceWord() {
         if transcriber.isRecording { transcriber.toggle(); return }
         guard let wc = content else { return }
+        transcriber.language = settings.targetLanguage   // pronunciation check stays target-locked
         clearResults()
         practiceTarget = wc.word
         practicingIndex = nil
@@ -221,6 +253,7 @@ final class TutorViewModel: ObservableObject {
     func practiceSentence(_ index: Int) {
         if transcriber.isRecording { transcriber.toggle(); return }
         guard let wc = content, wc.sentences.indices.contains(index) else { return }
+        transcriber.language = settings.targetLanguage   // pronunciation check stays target-locked
         clearResults()
         practiceTarget = wc.sentences[index].target
         practicingIndex = index

@@ -17,7 +17,7 @@ let package = Package(
             name: "FriendlyLangTutor",
             path: "app",
             exclude: ["Info.plist"],
-            resources: [.copy("seeds")]
+            resources: [.copy("words")]
         )
     ]
 )

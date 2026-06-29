@@ -11,6 +11,10 @@ final class Transcriber: ObservableObject {
     @Published var transcript = ""
     @Published var status = ""
 
+    // Language whisper transcribes in; the owner sets it (Words practice uses the
+    // target language, the conversation uses "auto" to detect either language spoken).
+    var language = "auto"
+
     // Called on the main actor with a fresh, non-empty transcript.
     var onResult: ((String) -> Void)?
 
@@ -85,7 +89,7 @@ final class Transcriber: ObservableObject {
 
         do {
             let text = try await Self.runWhisper(
-                model: model, language: settings.targetLanguage, wav: wav)
+                model: model, language: language, wav: wav)
             transcript = text.trimmingCharacters(in: .whitespacesAndNewlines)
             status = transcript.isEmpty ? "no speech detected" : "done"
             if !transcript.isEmpty { onResult?(transcript) }

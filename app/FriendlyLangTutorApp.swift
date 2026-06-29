@@ -4,8 +4,7 @@ import SwiftUI
 struct FriendlyLangTutorApp: App {
     var body: some Scene {
         WindowGroup("Friendly Lang Tutor") {
-            ContentView()
-                .task { VoiceStore.shared.load() }   // warm the voice list off-main
+            RootView()
         }
         .windowResizability(.contentSize)
 

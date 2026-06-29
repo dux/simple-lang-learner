@@ -11,6 +11,7 @@ struct SettingsView: View {
         TabView {
             languagesTab.tabItem { Label("Languages", systemImage: "globe") }
             voiceTab.tabItem { Label("Voice", systemImage: "waveform") }
+            textTab.tabItem { Label("Text", systemImage: "textformat.size") }
             enginesTab.tabItem { Label("Engines", systemImage: "cpu") }
             cacheTab.tabItem { Label("Cache", systemImage: "internaldrive") }
         }
@@ -41,16 +42,16 @@ struct SettingsView: View {
                     Text("Speed: \(Int((settings.speechRate * 100).rounded()))%")
                 }
                 Text("Applies to spoken words and sentences. 100% is the system default.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .appFont(.small).foregroundStyle(.secondary)
             }
 
             Section("Voice per language") {
                 ForEach(Languages.catalog) { lang in voiceRow(lang) }
                 if let err = voices.error {
-                    Text(err).font(.caption).foregroundStyle(.red)
+                    Text(err).appFont(.small).foregroundStyle(.red)
                 }
                 Text("Piper voices download automatically the first time you pick one.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .appFont(.small).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -73,6 +74,28 @@ struct SettingsView: View {
             get: { voices.selectedID(for: code) },
             set: { voices.select($0, for: code) }
         )
+    }
+
+    // MARK: Text
+
+    private var textTab: some View {
+        Form {
+            Section("Text size") {
+                ForEach(AppText.allCases) { role in
+                    Stepper(value: settings.fontBinding(role), in: role.range, step: 1) {
+                        HStack {
+                            Text(role.label).appFont(role)
+                            Spacer()
+                            Text("\(Int(settings.fontSize(role))) px")
+                                .foregroundStyle(.secondary).appFont(.small)
+                        }
+                    }
+                }
+            }
+            Text("Title is the headword; Normal is body text and sentences; Small is glosses and captions.")
+                .appFont(.small).foregroundStyle(.secondary)
+        }
+        .formStyle(.grouped)
     }
 
     // MARK: Engines

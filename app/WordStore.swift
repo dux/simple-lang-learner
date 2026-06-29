@@ -1,42 +1,29 @@
 import Foundation
 
-// The pool of words to learn. Seeds come from the bundled plain-text list
-// (seeds/<lang>.txt, one word per line); a small embedded list is the fallback so
-// the app still works if the resource bundle is missing.
+// The pool of words to learn for the current language pair, drawn from the one shared
+// base vocabulary (see Vocabulary). Holds selection state only; the data and the pair
+// resolution live in Vocabulary.
 @MainActor
 final class WordStore: ObservableObject {
-    @Published private(set) var words: [String]
+    @Published private(set) var entries: [VocabEntry]
     private var lastIndex: Int?
 
-    init(language: String = "es") {
-        words = Self.loadSeeds(language) ?? Self.fallback
+    init(target: String, native: String) {
+        entries = Vocabulary.entries(target: target, native: native)
     }
 
-    func reload(language: String) {
-        words = Self.loadSeeds(language) ?? Self.fallback
+    func reload(target: String, native: String) {
+        entries = Vocabulary.entries(target: target, native: native)
         lastIndex = nil
     }
 
-    // A random word that isn't the one we just showed.
-    func nextRandom() -> String {
-        guard words.count > 1 else { return words.first ?? "hola" }
-        var i = Int.random(in: 0..<words.count)
-        while i == lastIndex { i = Int.random(in: 0..<words.count) }
+    // A random concept that isn't the one we just showed.
+    func nextRandom() -> VocabEntry? {
+        guard !entries.isEmpty else { return nil }
+        guard entries.count > 1 else { return entries.first }
+        var i = Int.random(in: 0..<entries.count)
+        while i == lastIndex { i = Int.random(in: 0..<entries.count) }
         lastIndex = i
-        return words[i]
+        return entries[i]
     }
-
-    static func loadSeeds(_ lang: String) -> [String]? {
-        guard let url = Bundle.module.url(forResource: lang, withExtension: "txt", subdirectory: "seeds"),
-              let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
-        let list = text.split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && !$0.hasPrefix("#") }
-        return list.isEmpty ? nil : list
-    }
-
-    static let fallback = [
-        "hola", "gracias", "comer", "casa", "agua", "amigo",
-        "trabajo", "tiempo", "hablar", "libro",
-    ]
 }

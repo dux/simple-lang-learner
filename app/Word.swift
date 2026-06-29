@@ -19,8 +19,8 @@ enum WordStyle: String, CaseIterable, Identifiable {
 
 struct SentencePair: Hashable, Identifiable {
     let id = UUID()
-    let target: String   // sentence in the language being learned
-    let gloss: String    // segmented translation: each chunk followed by its meaning in (...)
+    let target: String     // sentence in the language being learned
+    let parts: [Segment]   // segmented gloss: each foreign chunk paired with its native meaning
 }
 
 // One word's generated content. Produced by the LLM in the flat line format and
@@ -35,7 +35,7 @@ struct WordContent: Hashable {
     // Parse the flat line format. One "KEY value" per line; ES/EN lines pair up in
     // order. Unknown lines (commentary, code fences) are ignored, so a chatty model
     // reply still parses as long as the keyed lines are present.
-    static func parse(_ raw: String) -> WordContent? {
+    static func parse(_ raw: String, target: String) -> WordContent? {
         var word = "", pos = "", meaning = ""
         var article: String?
         var targets: [String] = [], glosses: [String] = []
@@ -58,39 +58,43 @@ struct WordContent: Hashable {
 
         guard !word.isEmpty, !meaning.isEmpty else { return nil }
         let count = min(targets.count, glosses.count)
-        let pairs = (0..<count).map { SentencePair(target: targets[$0], gloss: glosses[$0]) }
+        let pairs = (0..<count).map {
+            SentencePair(target: targets[$0], parts: parseGloss(glosses[$0], lang: target))
+        }
         guard !pairs.isEmpty else { return nil }
         return WordContent(word: word, pos: pos, article: article, meaning: meaning, sentences: pairs)
     }
 
-    // Split a gloss into runs for styling: isMeaning == true for a "(...)" part
-    // (rendered muted), false for an original-language chunk. Parentheses are kept
-    // with the meaning. Defensive about unbalanced/nested parens.
-    static func glossSegments(_ gloss: String) -> [(text: String, isMeaning: Bool)] {
-        var segments: [(String, Bool)] = []
-        var current = ""
-        var depth = 0
+    // Parse the segmented gloss ("chunk (meaning) chunk (meaning) ...") into ordered
+    // foreign chunks, each paired with its native meaning. Defensive about missing or
+    // unbalanced parentheses. The result is the same Segment model the chat uses, so a
+    // gloss chunk is speakable through the shared path.
+    static func parseGloss(_ gloss: String, lang: String) -> [Segment] {
+        var parts: [Segment] = []
+        var chunk = "", meaning = "", depth = 0
+
+        func flush() {
+            let t = chunk.trimmingCharacters(in: .whitespaces)
+            let m = meaning.trimmingCharacters(in: .whitespaces)
+            if !t.isEmpty {
+                parts.append(Segment(text: t, lang: lang, translation: m.isEmpty ? nil : m, isForeign: true))
+            }
+            chunk = ""; meaning = ""
+        }
+
         for ch in gloss {
             switch ch {
             case "(":
-                if depth == 0, !current.isEmpty {
-                    segments.append((current, false))
-                    current = ""
-                }
-                current.append(ch)
                 depth += 1
+                if depth > 1 { meaning.append(ch) }   // nested paren belongs to the meaning
             case ")":
-                current.append(ch)
                 depth = max(0, depth - 1)
-                if depth == 0 {
-                    segments.append((current, true))
-                    current = ""
-                }
+                if depth == 0 { flush() } else { meaning.append(ch) }
             default:
-                current.append(ch)
+                if depth == 0 { chunk.append(ch) } else { meaning.append(ch) }
             }
         }
-        if !current.isEmpty { segments.append((current, depth > 0)) }
-        return segments
+        flush()   // trailing chunk with no meaning
+        return parts
     }
 }

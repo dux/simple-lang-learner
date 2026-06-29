@@ -9,13 +9,6 @@ import AVFoundation
 final class Speech {
     private let player = AudioPlayer()
 
-    // One utterance, optionally at a non-default speed.
-    struct Part {
-        let text: String
-        let lang: String
-        var speed: SpeechSpeed = .normal
-    }
-
     func stop() { player.stop() }
 
     // Speak a single utterance: play the cached clip if present, else render and cache
@@ -37,7 +30,7 @@ final class Speech {
 
     // Speak several utterances back to back (e.g. word, meaning, then word again slow).
     // Each renders with its own language's voice and speed, then plays in order.
-    func sequence(_ parts: [Part]) {
+    func sequence(_ parts: [Utterance]) {
         stop()
         Task {
             var urls: [URL] = []
@@ -56,7 +49,7 @@ final class Speech {
     }
 
     // Warm the cache for utterances we expect to play soon, so playback is instant.
-    func prepare(_ parts: [Part]) async {
+    func prepare(_ parts: [Utterance]) async {
         for part in parts {
             let trimmed = part.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }

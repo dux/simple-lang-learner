@@ -37,7 +37,7 @@ enum Generator {
 
         if force {
             try? FileManager.default.removeItem(at: url)
-        } else if let cached = ContentCache.loadText(url), let wc = WordContent.parse(cached) {
+        } else if let cached = ContentCache.loadText(url), let wc = WordContent.parse(cached, target: target) {
             return wc
         }
 
@@ -45,7 +45,7 @@ enum Generator {
         guard backend.isAvailable() else { throw ChatError.notInstalled(backend.displayName) }
 
         let raw = try await backend.complete(prompt(word: word, style: style, target: target, native: native))
-        guard let wc = WordContent.parse(raw) else {
+        guard let wc = WordContent.parse(raw, target: target) else {
             throw ChatError.process("could not parse model reply")
         }
         ContentCache.saveText(raw, to: url)

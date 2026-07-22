@@ -2,7 +2,7 @@ import SwiftUI
 
 // Browse the full shared vocabulary for the current language: every base concept as
 // target word <-> native meaning, searchable and grouped by category, with each word's
-// progress (level dot + view count). Tapping a word loads it into the Words pane; the
+// progress (level dot + view count). Selecting a word loads it into the Words pane; the
 // speaker plays it. Embedded in the Words pane - depends only on data + two closures.
 struct AllWordsView: View {
     let entries: [VocabEntry]
@@ -13,6 +13,7 @@ struct AllWordsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @State private var query = ""
     @State private var tier: BaseWord.Tier? = nil   // nil = all tiers
+    @State private var selection: VocabEntry.ID?    // List row selection -> activates the word
 
     var body: some View {
         VStack(spacing: 0) {
@@ -45,12 +46,15 @@ struct AllWordsView: View {
                 .frame(maxWidth: .infinity)
             Spacer()
         } else {
-            List {
+            List(selection: $selection) {
                 ForEach(grouped, id: \.category) { group in
                     Section(group.category) {
                         ForEach(group.items) { row($0) }
                     }
                 }
+            }
+            .onChange(of: selection) { _, id in
+                if let e = entries.first(where: { $0.id == id }) { select(e) }
             }
         }
     }
@@ -71,7 +75,6 @@ struct AllWordsView: View {
                 .buttonStyle(.borderless).pointingHand().help("Play")
         }
         .contentShape(Rectangle())
-        .onTapGesture { select(e) }
         .pointingHand()
     }
 

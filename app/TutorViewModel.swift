@@ -226,9 +226,15 @@ final class TutorViewModel: ObservableObject {
     // Speak an arbitrary target-language word (the All Words row speaker).
     func say(_ text: String) { speech.say(text, lang: settings.targetLanguage) }
 
-    // Open a word chosen from the All Words list - a manual view.
+    // Open a word chosen from the All Words list - a manual view. Publish the new
+    // entry and clear the old content right away so the pane switches instantly
+    // (spinner + the new word's knowledge state) while generation runs.
     func load(_ entry: VocabEntry) {
         progress.recordShown(id: entry.id, lang: settings.targetLanguage)
+        if entry.id != self.entry?.id {
+            self.entry = entry
+            content = nil
+        }
         Task { await loadForeground(entry, force: false) }
     }
 

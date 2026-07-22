@@ -31,3 +31,6 @@ Icon?
 # Secrets / local config
 *.env
 .env.local
+
+# Scratch
+tmp/

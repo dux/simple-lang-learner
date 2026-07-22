@@ -65,6 +65,7 @@ task :app do
     sh "mkdir -p #{BUNDLE_DIR}/Contents/MacOS"
     sh "mkdir -p #{BUNDLE_DIR}/Contents/Resources"
     sh "cp app/Info.plist #{BUNDLE_DIR}/Contents/Info.plist"
+    sh "cp app/AppIcon.icns #{BUNDLE_DIR}/Contents/Resources/AppIcon.icns"
     sh "cp #{bin} #{BUNDLE_DIR}/Contents/MacOS/#{APP_NAME}"
 
     # SwiftPM bundles resources (seed lists) next to the binary; carry them in so

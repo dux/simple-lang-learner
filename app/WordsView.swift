@@ -98,7 +98,7 @@ struct WordsView: View {
                 .appFont(.normal)
                 .foregroundStyle(.primary)
             HStack(spacing: 10) {
-                SpeedControls { vm.speakWord($0) }
+                SpeedControls(slowShortcut: .init("r")) { vm.speakWord($0) }
                 Divider().frame(height: 18)
                 Button { vm.practiceWord() } label: {
                     Image(systemName: vm.isPracticingWord ? "mic.fill" : "mic").appFont(.normal)
@@ -131,7 +131,7 @@ struct WordsView: View {
             ForEach(Array(content.sentences.enumerated()), id: \.element.id) { index, pair in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
-                        SpeedControls { vm.speakTarget(index, speed: $0) }
+                        SpeedControls(slowShortcut: Self.sentenceShortcut(index)) { vm.speakTarget(index, speed: $0) }
                         Divider().frame(height: 16)
                         Button { vm.practiceSentence(index) } label: {
                             Image(systemName: vm.isPracticing(index) ? "mic.fill" : "mic").appFont(.normal)
@@ -149,6 +149,12 @@ struct WordsView: View {
                 Divider()
             }
         }
+    }
+
+    // Cmd+1/2/3 say the matching example sentence slowly
+    private static func sentenceShortcut(_ index: Int) -> KeyboardShortcut? {
+        guard index < 9 else { return nil }
+        return KeyboardShortcut(KeyEquivalent(Character(String(index + 1))))
     }
 
     // MARK: say it

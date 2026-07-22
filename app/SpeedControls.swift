@@ -5,6 +5,7 @@ import SwiftUI
 struct SpeedControls: View {
     @ObservedObject private var settings = AppSettings.shared
     var role: AppText = .normal
+    var slowShortcut: KeyboardShortcut? = nil   // key equivalent for the middle (slow) button
     let play: (SpeechSpeed) -> Void
 
     var body: some View {
@@ -16,6 +17,7 @@ struct SpeedControls: View {
                 .buttonStyle(.borderless)
                 .pointingHand()
                 .help(speed.label)
+                .keyboardShortcut(speed == .slow ? slowShortcut : nil)
             }
         }
     }
